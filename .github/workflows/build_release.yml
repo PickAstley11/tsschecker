@@ -446,16 +446,15 @@ jobs:
           make -j"$(sysctl -n hw.ncpu)"
           mkdir -p dist
           cp tsschecker/tsschecker dist/tsschecker
+          python3 scripts/bundle_macos_deps.py dist
           cat > dist/README.txt <<'EOF'
-          Apple Silicon macOS build of tsschecker.
-
-          Runtime dependencies (Homebrew):
-            brew install libplist libirecovery libzip curl openssl@3
+          Apple Silicon macOS build of tsschecker. Required non-system libraries
+          are bundled in the lib directory; Homebrew is not required at runtime.
 
           Run from Terminal with:
             ./tsschecker --help
           EOF
-          tar -czf tsschecker_macos_arm64.tar.gz -C dist tsschecker README.txt
+          tar -czf tsschecker_macos_arm64.tar.gz -C dist tsschecker README.txt lib
 
       - uses: actions/upload-artifact@v4
         with:
@@ -524,6 +523,6 @@ jobs:
           body: |
             ${{ env.COMMIT_MSG }}
 
-            macOS arm64 builds require Homebrew runtime dependencies: `brew install libplist libirecovery libzip curl openssl@3`.
+            The macOS arm64 archive bundles its non-system runtime libraries and does not require Homebrew at runtime.
           draft: false
           prerelease: false
