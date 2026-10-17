@@ -24,7 +24,7 @@ jobs:
   build-win-lin:
     runs-on: ubuntu-latest
     strategy:
-      matrix:
+      fail-fast: false       matrix:
         triple:
         - x86_64-linux-musl
         - arm-linux-musleabi
@@ -94,7 +94,7 @@ jobs:
       - name: build zlib
         run: |
           wget -q -nc -P ${BUILD_SOURCE} \
-            https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
+            https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz
           tar xf ${BUILD_SOURCE}/zlib-${ZLIB_VERSION}.tar.gz -C ${BUILD_WORK}
 
           cd ${BUILD_WORK}/zlib-${ZLIB_VERSION}
