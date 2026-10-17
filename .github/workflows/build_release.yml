@@ -24,7 +24,7 @@ jobs:
   build-win-lin:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false       matrix:
+      matrix:
         triple:
         - x86_64-linux-musl
         - arm-linux-musleabi
