@@ -69,6 +69,7 @@ static struct option longopts[] = {
     { "bplist",             no_argument,       NULL, 'p' },
     { "generator",          required_argument, NULL, 'g' },
     { "cryptexseed",        required_argument, NULL, 'x' },
+    { "firmware-preflight-info", required_argument, NULL, 'F' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -96,6 +97,7 @@ void cmd_help(){
     printf("  -9  --sepnonce NONCE\t\tmanually specify SEP Nonce instead of using random ones (not required for saving blobs)\n");
     printf("  -t  --cryptexnonce NONCE\t\tspecify Cryptex1 Nonce(required for saving cryptex blobs)\n");
     printf("  -c  --bbsnum SNUM\t\tmanually specify BbSNUM in HEX to save valid BBTickets (not required for saving blobs)\n\n");
+    printf("      --firmware-preflight-info PATH\tinclude device eUICC ticket data from a FirmwarePreflightInfo plist\n");
     printf("  -3  --save-path PATH\t\tspecify output path for saving shsh blobs\n");
     printf("  -p  --bplist\t\t\tsave shsh blob as binary plist (used with --save)\n");
     printf("  -S  --server-url URL\t\tmanually specify TSS server url\n");
@@ -196,7 +198,7 @@ int main(int argc, const char * argv[]) {
         return -1;
     }
 
-    while ((opt = getopt_long(argc, (char* const *)argv, "hd:i:Z:B:e:g:x:b::m:3:8:9:t:r:c:S:uElso0124567p", longopts, &optindex)) > 0) {
+    while ((opt = getopt_long(argc, (char* const *)argv, "hd:i:Z:B:e:g:x:b::m:3:8:9:t:r:c:S:F:uElso0124567p", longopts, &optindex)) > 0) {
         switch (opt) {
             case 'h': // long option: "help"; can be called as short option
                 cmd_help();
@@ -332,6 +334,9 @@ int main(int argc, const char * argv[]) {
                 break;
             case 'c': // long option: "bbsnum"; can be called as short option
                 bbsnum = optarg;
+                break;
+            case 'F': // long option: "firmware-preflight-info"
+                devVals.firmwarePreflightInfoPath = optarg;
                 break;
             case 'S': // long option: "server-url"; can be called as short option
                 serverUrl = optarg;

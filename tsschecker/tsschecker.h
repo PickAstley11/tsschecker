@@ -64,6 +64,7 @@ typedef struct{
     char *apnonce;
     char *sepnonce;
     char *cryptexnonce;
+    char *firmwarePreflightInfoPath;
     uint64_t ecid;
     uint64_t bbgcid;
     size_t parsedApnonceLen;

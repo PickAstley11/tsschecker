@@ -124,6 +124,7 @@ Example: `tsschecker -d iPhone10,1 -B D20AP -e 5482657301265 -i 14.7.1 --generat
 | `-8`  | `--apnonce NONCE`       | manually specify ApNonce instead of using random ones<br/>(required when saving blobs for arm64e devices with a matching generator) |
 | `-9`  | `--sepnonce NONCE`      | manually specify SepNonce instead of using random ones (not required for saving signing tickets) |
 | `-c`  | `--bbsnum SNUM`         | manually specify BbSNUM in HEX to save valid BBTickets (not required for saving blobs) |
+|       | `--firmware-preflight-info PATH` | include device eUICC ticket data from an XML `FirmwarePreflightInfo` plist |
 | `-3`  | `--save-path PATH`      | specify path for saving shsh blobs |
 | `-6`  | `--beta`                | request ticket for a beta instead of normal release (use with `-o`) |
 | `-1`  | `--list-devices`        | list all known devices |
@@ -133,3 +134,11 @@ Example: `tsschecker -d iPhone10,1 -B D20AP -e 5482657301265 -i 14.7.1 --generat
 | `-5`  | `--print-tss-response`  | print the TSS response that comes from Apple |
 | `-r`  | `--raw`                 | send raw file to Apple's TSS server (useful for debugging) |
 | `-0`  | `--debug`               | print extra tss info(useful for debugging) |
+
+## TSS status 168 and eUICC tickets
+
+Apple's `STATUS=168&MESSAGE=An internal error occurred.` is not proof that a firmware is unsigned. In the TSS request log associated with this issue, the request asked for `@eUICC,Ticket` but omitted the device-specific eUICC identifiers and the `eUICC,Gold`/`eUICC,Main` nonces. This checker now omits the eUICC ticket request unless a `FirmwarePreflightInfo` plist is supplied. When the file contains the required fields, it adds them to the request.
+
+You can capture the plist from a connected device with `ideviceinfo -k FirmwarePreflightInfo > firmware-preflight-info.plist`, then pass `--firmware-preflight-info firmware-preflight-info.plist`. The file can contain the device's eUICC identifiers and nonces, so keep it private. Debug request output can include those values too. The TSS request itself is still read-only with respect to the phone.
+
+The client retries status 168 on up to three HTTPS Apple endpoints. If Apple still returns 168 after the eUICC request is corrected or omitted, no ticket is saved and the result remains unknown; a client cannot force Apple to issue a ticket.

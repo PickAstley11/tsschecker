@@ -1347,6 +1347,126 @@ int tss_populate_random(plist_t tssreq, int is64bit, int hasSEP, t_devicevals *d
     return rt;
 }
 
+static void tss_remove_vinyl_tags(plist_t request)
+{
+    static const char *keys[] = {
+        "@eUICC,Ticket", "eUICC,ApProductionMode", "eUICC,ChipID",
+        "eUICC,EID", "eUICC,RootKeyIdentifier", "eUICC,Gold", "eUICC,Main"
+    };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        plist_dict_remove_item(request, keys[i]);
+    }
+}
+
+static int tss_load_firmware_preflight_info(const char *path, plist_t *preflight)
+{
+    FILE *file = NULL;
+    char *xml = NULL;
+    long length = 0;
+    int result = -1;
+
+    if (!path || !preflight) {
+        return -1;
+    }
+    *preflight = NULL;
+    file = fopen(path, "rb");
+    if (!file || fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) <= 0 ||
+        length > 1024 * 1024 || fseek(file, 0, SEEK_SET) != 0) {
+        error("[TSSR] unable to read FirmwarePreflightInfo plist at %s\n", path);
+        goto done;
+    }
+
+    xml = (char *)malloc((size_t)length + 1);
+    if (!xml || fread(xml, 1, (size_t)length, file) != (size_t)length) {
+        error("[TSSR] unable to read FirmwarePreflightInfo plist contents\n");
+        goto done;
+    }
+    xml[length] = '\0';
+    plist_from_xml(xml, (uint32_t)length, preflight);
+    if (!*preflight || plist_get_node_type(*preflight) != PLIST_DICT) {
+        error("[TSSR] FirmwarePreflightInfo must be an XML plist dictionary\n");
+        if (*preflight) {
+            plist_free(*preflight);
+            *preflight = NULL;
+        }
+        goto done;
+    }
+    result = 0;
+
+done:
+    free(xml);
+    if (file) fclose(file);
+    return result;
+}
+
+static int tss_populate_vinylvals(plist_t request, plist_t parameters,
+                                  const char *preflightPath,
+                                  t_basebandMode basebandMode)
+{
+    plist_t preflight = NULL;
+    plist_t chipIDNode = NULL;
+    uint64_t chipID = 0;
+    int result = -1;
+    static const struct {
+        const char *requestKey;
+        const char *preflightKey;
+    } dataKeys[] = {
+        { "eUICC,EID", "EUICCCSN" },
+        { "eUICC,RootKeyIdentifier", "EUICCCertIdentifier" },
+        { "EUICCGoldNonce", "EUICCGoldNonce" },
+        { "EUICCMainNonce", "EUICCMainNonce" }
+    };
+
+    if (!preflightPath) {
+        /* Never ask Apple for an eUICC ticket with empty device-specific fields. */
+        tss_remove_vinyl_tags(request);
+        info("[TSSC] No FirmwarePreflightInfo supplied; omitting the eUICC ticket request\n");
+        return 0;
+    }
+    if (tss_load_firmware_preflight_info(preflightPath, &preflight) < 0) {
+        goto done;
+    }
+
+    chipIDNode = plist_dict_get_item(preflight, "EUICCChipID");
+    if (!chipIDNode || (plist_get_node_type(chipIDNode) != PLIST_UINT &&
+                        plist_get_node_type(chipIDNode) != PLIST_INT)) {
+        error("[TSSR] FirmwarePreflightInfo is missing the integer EUICCChipID field\n");
+        goto done;
+    }
+    plist_get_uint_val(chipIDNode, &chipID);
+    if (chipID < 5) {
+        tss_remove_vinyl_tags(request);
+        info("[TSSC] Device EUICCChipID does not require an eUICC ticket; omitting it\n");
+        result = 0;
+        goto done;
+    }
+
+    plist_dict_set_item(parameters, "eUICC,ChipID", plist_copy(chipIDNode));
+    for (size_t i = 0; i < sizeof(dataKeys) / sizeof(dataKeys[0]); i++) {
+        plist_t node = plist_dict_get_item(preflight, dataKeys[i].preflightKey);
+        if (!node || plist_get_node_type(node) != PLIST_DATA) {
+            error("[TSSR] FirmwarePreflightInfo is missing the required data field %s\n",
+                  dataKeys[i].preflightKey);
+            goto done;
+        }
+        plist_dict_set_item(parameters, dataKeys[i].requestKey, plist_copy(node));
+    }
+
+    if (tss_request_add_vinyl_tags(request, parameters, NULL) < 0) {
+        error("[TSSR] failed to add eUICC ticket fields\n");
+        goto done;
+    }
+    if (basebandMode == kBasebandModeWithoutBaseband) {
+        plist_dict_remove_item(request, "@BBTicket");
+    }
+    info("[TSSC] Added device eUICC ticket fields from FirmwarePreflightInfo\n");
+    result = 0;
+
+done:
+    if (preflight) plist_free(preflight);
+    return result;
+}
+
 int tssrequest(plist_t *tssreqret, char *buildManifest, t_devicevals *devVals, t_basebandMode basebandMode){
 #define reterror(a...) {error(a); error = -1; goto error;}
     int error = 0;
@@ -1452,6 +1572,12 @@ getID0:
         debug("[TSSR] User specified to not request a baseband ticket.\n");
     }
     
+    if (tss_populate_vinylvals(tssreq, tssparameter,
+                                devVals->firmwarePreflightInfoPath,
+                                basebandMode) < 0) {
+        reterror("[TSSR] failed to populate eUICC ticket fields\n");
+    }
+
     *tssreqret = tssreq;
 error:
     if (manifest) plist_free(manifest);
@@ -1524,7 +1650,13 @@ int isManifestBufSignedForDevice(char *buildManifestBuffer, t_devicevals *devVal
     if (tssrequest(&tssreq, buildManifestBuffer, devVals, basebandMode))
         reterror("[TSSR] failed to build tss request\n");
 
-    isSigned = ((apticket = tss_request_send(tssreq, server_url_string)) > 0);
+    apticket = tss_request_send(tssreq, server_url_string);
+    if (!apticket) {
+        error("[TSSR] TSS did not return an AP ticket; signing status is unknown (see the TSS status above)\n");
+        isSigned = -1;
+        goto error;
+    }
+    isSigned = 1;
     
     if (print_tss_response) debug_plist2(apticket);
     if (isSigned && save_shshblobs){
@@ -1624,6 +1756,11 @@ int isManifestBufSignedForDevice(char *buildManifestBuffer, t_devicevals *devVal
             debug_plist2(cryptexticket);
           }
         }
+        }
+        if (devVals->cryptexnonce && devVals->parsedCryptexnonceLen && !cryptexticket) {
+            error("[TSSR] Cryptex1 ticket request failed; refusing to save an AP-only blob as a Cryptex1 blob\n");
+            isSigned = -1;
+            goto error;
         }
 
         plist_t manifest = 0;
