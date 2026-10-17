@@ -81,13 +81,16 @@ def main() -> None:
     queue = [EXECUTABLE]
     visited = set()
     copied = {}
+    origins = {EXECUTABLE: EXECUTABLE}
     while queue:
         owner = queue.pop(0)
         if owner in visited:
             continue
         visited.add(owner)
         for name in dependencies(owner):
-            source = resolve(name, owner)
+            # Resolve @loader_path and @rpath against the original Homebrew
+            # dylib location. The packaged copy has a different directory.
+            source = resolve(name, origins.get(owner, owner))
             if source is None:
                 continue
             destination = copied.get(source)
@@ -98,6 +101,7 @@ def main() -> None:
                     destination.chmod(destination.stat().st_mode | 0o200)
                     run("install_name_tool", "-id", f"@loader_path/{destination.name}", str(destination))
                 copied[source] = destination
+                origins[destination] = source
                 queue.append(destination)
             relative = (f"@loader_path/lib/{destination.name}" if owner == EXECUTABLE
                         else f"@loader_path/{destination.name}")
