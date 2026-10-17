@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <math.h>
 #include <time.h>
@@ -579,26 +580,56 @@ char *getFirmwareJson(){
 }
 
 char *getBetaFirmwareJson2(const char *type, const char *buildid) {
-    char url[256], path[256];
-    memset(url, 0, 256);
-    memset(path, 0, 256);
-    strcat(url, FIRMWARE_BETA_JSON_URL2);
-    strcat(url, type);
-    strcat(url, ";");
-    strcat(url, buildid);
-    strcat(url, ".json");
-    strcat(path, FIRMWARE_BETA_JSON_PATH);
-    debug("[TSSC] opening %s\n", path);
+    if (!type || !buildid || !*type || !*buildid) return NULL;
+    if (strlen(buildid) > 64) return NULL;
+    for (const unsigned char *c = (const unsigned char *)buildid; *c; c++) {
+        if (!isalnum(*c) && *c != '-') return NULL;
+    }
+
+    /* Cache each build separately; a shared beta cache can silently return
+       metadata for a different build on a subsequent lookup. */
+    size_t urlSize = strlen(FIRMWARE_BETA_JSON_URL2) + strlen(type) +
+                     strlen(buildid) + sizeof(";.json");
+    size_t pathSize = strlen(FIRMWARE_BETA_JSON_PATH) + strlen(buildid) + 2;
+    char *url = (char *)malloc(urlSize);
+    char *path = (char *)malloc(pathSize);
+    if (!url || !path) {
+        free(url);
+        free(path);
+        return NULL;
+    }
+    snprintf(url, urlSize, "%s%s;%s.json", FIRMWARE_BETA_JSON_URL2, type, buildid);
+    snprintf(path, pathSize, "%s.%s", FIRMWARE_BETA_JSON_PATH, buildid);
+    debug("[TSSC] opening AppleDB metadata cache %s\n", path);
+
     FILE *f = fopen(path, "rb");
-    if (!f || nocache){
-        downloadFile(url, path);
+    if (!f || nocache) {
+        if (f) fclose(f);
+        if (downloadFile(url, path) != 0) {
+            remove(path); /* do not leave an empty cache that masks a later retry */
+            free(url);
+            free(path);
+            return NULL;
+        }
         f = fopen(path, "rb");
     }
-    fseek(f, 0, SEEK_END);
+    free(url);
+    free(path);
+    if (!f || fseek(f, 0, SEEK_END) != 0) {
+        if (f) fclose(f);
+        return NULL;
+    }
     long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *fJson = calloc(1, fsize + 1);
-    fread(fJson, fsize, 1, f);
+    if (fsize <= 0 || fsize > 8 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    char *fJson = (char *)calloc(1, (size_t)fsize + 1);
+    if (!fJson || fread(fJson, 1, (size_t)fsize, f) != (size_t)fsize) {
+        free(fJson);
+        fclose(f);
+        return NULL;
+    }
     fclose(f);
     return fJson;
 }
@@ -764,6 +795,131 @@ long parseTokens(const char *json, jssytok_t **tokens){
     return jssy_parse(json, strlen(json), *tokens, sizeof(jssytok_t) * tokensCnt);
 }
 
+static int plist_string_equals(plist_t node, const char *expected)
+{
+    char *value = NULL;
+    int equal = 0;
+    if (!node || !expected || plist_get_node_type(node) != PLIST_STRING) return 0;
+    plist_get_string_val(node, &value);
+    if (value) equal = strcmp(value, expected) == 0;
+    free(value);
+    return equal;
+}
+
+static char *plist_copy_string(plist_t node)
+{
+    char *value = NULL;
+    if (!node || plist_get_node_type(node) != PLIST_STRING) return NULL;
+    plist_get_string_val(node, &value);
+    return value;
+}
+
+static int plist_boolean_is_true(plist_t node)
+{
+    uint8_t value = 0;
+    if (!node || plist_get_node_type(node) != PLIST_BOOLEAN) return 0;
+    plist_get_bool_val(node, &value);
+    return value != 0;
+}
+
+static int plist_array_contains_string(plist_t array, const char *value)
+{
+    if (!array || !value || plist_get_node_type(array) != PLIST_ARRAY) return 0;
+    for (uint32_t i = 0; i < plist_array_get_size(array); i++) {
+        if (plist_string_equals(plist_array_get_item(array, i), value)) return 1;
+    }
+    return 0;
+}
+
+static char *getAppleDBBetaURLForDevice(plist_t root, const char *deviceID)
+{
+    plist_t sources = plist_dict_get_item(root, "sources");
+    char *activeURL = NULL;
+    if (!sources || plist_get_node_type(sources) != PLIST_ARRAY) return NULL;
+
+    for (uint32_t sourceIndex = 0; sourceIndex < plist_array_get_size(sources); sourceIndex++) {
+        plist_t source = plist_array_get_item(sources, sourceIndex);
+        plist_t sourceType = plist_dict_get_item(source, "type");
+        plist_t devices = plist_dict_get_item(source, "deviceMap");
+        plist_t links = plist_dict_get_item(source, "links");
+        if (!plist_string_equals(sourceType, "ipsw") ||
+            !plist_array_contains_string(devices, deviceID) ||
+            !links || plist_get_node_type(links) != PLIST_ARRAY) {
+            continue;
+        }
+
+        for (uint32_t linkIndex = 0; linkIndex < plist_array_get_size(links); linkIndex++) {
+            plist_t link = plist_array_get_item(links, linkIndex);
+            plist_t urlNode = plist_dict_get_item(link, "url");
+            plist_t active = plist_dict_get_item(link, "active");
+            plist_t preferred = plist_dict_get_item(link, "preferred");
+            char *url = plist_copy_string(urlNode);
+            if (!plist_boolean_is_true(active) || !url ||
+                strncmp(url, "https://updates.cdn-apple.com/", 30) != 0) {
+                free(url);
+                continue;
+            }
+            if (plist_boolean_is_true(preferred)) {
+                free(activeURL);
+                return url;
+            }
+            if (!activeURL) activeURL = url;
+            else free(url);
+        }
+        if (activeURL) return activeURL;
+    }
+    return activeURL;
+}
+
+static t_versionURL *getAppleDBBetaFirmware(const char *deviceModel, const char *buildID)
+{
+    char *json = NULL;
+    plist_t metadata = NULL;
+    plist_t build = NULL;
+    plist_t version = NULL;
+    plist_t beta = NULL;
+    plist_t devices = NULL;
+    char *url = NULL;
+    t_versionURL *result = NULL;
+
+    if (!deviceModel || !buildID) return NULL;
+    json = getBetaFirmwareJson2("iOS", buildID);
+    if (!json) return NULL;
+    if (plist_from_json(json, (uint32_t)strlen(json), &metadata) != PLIST_ERR_SUCCESS || !metadata) goto done;
+
+    build = plist_dict_get_item(metadata, "build");
+    version = plist_dict_get_item(metadata, "version");
+    beta = plist_dict_get_item(metadata, "beta");
+    devices = plist_dict_get_item(metadata, "deviceMap");
+    if (!plist_string_equals(build, buildID) || !plist_boolean_is_true(beta) ||
+        !plist_array_contains_string(devices, deviceModel)) {
+        goto done;
+    }
+
+    url = getAppleDBBetaURLForDevice(metadata, deviceModel);
+    if (!url || !version || plist_get_node_type(version) != PLIST_STRING) goto done;
+
+    result = (t_versionURL *)calloc(2, sizeof(t_versionURL));
+    if (!result) goto done;
+    result[0].url = url;
+    url = NULL;
+    result[0].version = plist_copy_string(version);
+    result[0].buildID = plist_copy_string(build);
+    if (!result[0].version || !result[0].buildID) {
+        free(result[0].url);
+        free(result[0].version);
+        free(result[0].buildID);
+        free(result);
+        result = NULL;
+    }
+
+done:
+    free(url);
+    if (metadata) plist_free(metadata);
+    free(json);
+    return result;
+}
+
 #pragma mark get functions
 //returns NULL terminated array of t_versionURL objects
 t_versionURL *getFirmwareUrls(const char *deviceModel, t_iosVersion *versVals, jssytok_t *tokens, bool beta, bool ota){
@@ -775,6 +931,14 @@ t_versionURL *getFirmwareUrls(const char *deviceModel, t_iosVersion *versVals, j
     const char *versstring = (versVals->buildID) ? versVals->buildID : versVals->version;
 
     if (!firmwares) {
+        if (!ota && versVals->buildID) {
+            t_versionURL *betaFirmware = getAppleDBBetaFirmware(deviceModel, versVals->buildID);
+            if (betaFirmware) {
+                info("[TSSC] Resolved beta build %s (%s) from AppleDB\n",
+                     betaFirmware[0].buildID, betaFirmware[0].version);
+                return betaFirmware;
+            }
+        }
         return error("[TSSC] device '%s' could not be found in devicelist\n", deviceModel), NULL;
     }
 
@@ -844,7 +1008,19 @@ malloc_rets:
         }
     }
     
-    if (!retcounter) return NULL;
+    if (!retcounter) {
+        /* An explicit build ID is unambiguous. Try the beta catalog even
+           without --beta so callers can request a known beta build directly. */
+        if (!ota && versVals->buildID) {
+            t_versionURL *betaFirmware = getAppleDBBetaFirmware(deviceModel, versVals->buildID);
+            if (betaFirmware) {
+                info("[TSSC] Resolved beta build %s (%s) from AppleDB\n",
+                     betaFirmware[0].buildID, betaFirmware[0].version);
+                return betaFirmware;
+            }
+        }
+        return NULL;
+    }
     else if (!rets) goto malloc_rets;
     
     return (t_versionURL*)rets_base;
@@ -1934,8 +2110,18 @@ int isVersionSignedForDevice(jssytok_t *firmwareTokens, t_iosVersion *versVals, 
     int isSignedOne = 0;
     char *buildManifest = NULL;
     
-    t_versionURL *urls = getFirmwareUrls(devVals->deviceModel, versVals, firmwareTokens, false, versVals->isOta);
-    if (!urls) reterror("[TSSC] ERROR: could not get url for device %s on iOS %s\n",devVals->deviceModel,(!versVals->version ? versVals->buildID : versVals->version));
+    t_versionURL *urls = getFirmwareUrls(devVals->deviceModel, versVals, firmwareTokens, versVals->useBeta, versVals->isOta);
+    if (!urls) {
+        if (versVals->version && !versVals->buildID) {
+            reterror("[TSSC] no restore IPSW found for iOS %s on %s; verify the exact version. For beta firmware, use its build ID with --buildid (for example, 24B5089g)\n",
+                     versVals->version, devVals->deviceModel);
+        }
+        reterror("[TSSC] ERROR: no restore IPSW URL found for %s '%s' on device %s%s\n",
+                 (versVals->buildID ? "build ID" : "iOS version"),
+                 (versVals->buildID ? versVals->buildID : versVals->version),
+                 devVals->deviceModel,
+                 (versVals->useBeta ? " (beta lookup was also attempted)" : ""));
+    }
 
     int cursigned = 0;
     for (t_versionURL *u = urls; u->url; u++) {

@@ -101,7 +101,7 @@ void cmd_help(){
     printf("  -3  --save-path PATH\t\tspecify output path for saving shsh blobs\n");
     printf("  -p  --bplist\t\t\tsave shsh blob as binary plist (used with --save)\n");
     printf("  -S  --server-url URL\t\tmanually specify TSS server url\n");
-    printf("  -6  --beta\t\t\trequest tickets for a beta instead of normal release (use with -o)\n");
+    printf("  -6  --beta\t\t\tinclude beta firmware in OTA lookup; beta restore build IDs are auto-detected\n");
     printf("  -1  --list-devices\t\tlist all known devices\n");
     printf("  -2  --list-ios\t\tlist all known firmware versions\n");
     printf("  -7  --nocache \t\tignore caches and re-download required files\n");

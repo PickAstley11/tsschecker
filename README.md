@@ -126,7 +126,7 @@ Example: `tsschecker -d iPhone10,1 -B D20AP -e 5482657301265 -i 14.7.1 --generat
 | `-c`  | `--bbsnum SNUM`         | manually specify BbSNUM in HEX to save valid BBTickets (not required for saving blobs) |
 |       | `--firmware-preflight-info PATH` | include device eUICC ticket data from an XML `FirmwarePreflightInfo` plist |
 | `-3`  | `--save-path PATH`      | specify path for saving shsh blobs |
-| `-6`  | `--beta`                | request ticket for a beta instead of normal release (use with `-o`) |
+| `-6`  | `--beta`                | include beta firmware in OTA lookup; explicit beta restore build IDs are also resolved automatically |
 | `-1`  | `--list-devices`        | list all known devices |
 | `-2`  | `--list-ios`            | list all known firmware versions |
 | `-7`  | `--nocache`             | ignore caches and re-download required files |
@@ -139,6 +139,10 @@ Example: `tsschecker -d iPhone10,1 -B D20AP -e 5482657301265 -i 14.7.1 --generat
 
 Apple's `STATUS=168&MESSAGE=An internal error occurred.` is not proof that a firmware is unsigned. In the TSS request log associated with this issue, the request asked for `@eUICC,Ticket` but omitted the device-specific eUICC identifiers and the `eUICC,Gold`/`eUICC,Main` nonces. This checker now omits the eUICC ticket request unless a `FirmwarePreflightInfo` plist is supplied. When the file contains the required fields, it adds them to the request.
 
-You can capture the plist from a connected device with `ideviceinfo -k FirmwarePreflightInfo > firmware-preflight-info.plist`, then pass `--firmware-preflight-info firmware-preflight-info.plist`. The file can contain the device's eUICC identifiers and nonces, so keep it private. Debug request output can include those values too. The TSS request itself is still read-only with respect to the phone.
+You can capture the plist from a connected device with `ideviceinfo -x -k FirmwarePreflightInfo > firmware-preflight-info.plist`, then pass `--firmware-preflight-info firmware-preflight-info.plist`. The `-x` option is required: without it, `ideviceinfo` writes its default key/value format, while tsschecker requires an XML plist dictionary. The file can contain the device's eUICC identifiers and nonces, so keep it private. Debug request output can include sensitive request values too. The TSS request itself is still read-only with respect to the phone.
 
 The client retries status 168 on up to three HTTPS Apple endpoints. If Apple still returns 168 after the eUICC request is corrected or omitted, no ticket is saved and the result remains unknown; a client cannot force Apple to issue a ticket.
+
+### Beta restore IPSWs
+
+The public restore catalog does not contain beta IPSWs. For a beta restore build, pass `--buildid BUILD`; tsschecker resolves that build's device-specific IPSW through AppleDB, then asks Apple's TSS server whether it is currently signing. Explicit beta build IDs are detected automatically, so `--beta` is not required for that lookup. Beta marketing versions are not resolved from `--ios`, so use the build ID shown by Apple's beta release (for example, `24B5089g`). A missing URL is a catalog lookup failure, not a signing result.
