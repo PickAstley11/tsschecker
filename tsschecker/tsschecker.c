@@ -878,6 +878,7 @@ static t_versionURL *getAppleDBBetaFirmware(const char *deviceModel, const char 
     plist_t build = NULL;
     plist_t version = NULL;
     plist_t beta = NULL;
+    plist_t releaseCandidate = NULL;
     plist_t devices = NULL;
     char *url = NULL;
     t_versionURL *result = NULL;
@@ -890,8 +891,10 @@ static t_versionURL *getAppleDBBetaFirmware(const char *deviceModel, const char 
     build = plist_dict_get_item(metadata, "build");
     version = plist_dict_get_item(metadata, "version");
     beta = plist_dict_get_item(metadata, "beta");
+    releaseCandidate = plist_dict_get_item(metadata, "rc");
     devices = plist_dict_get_item(metadata, "deviceMap");
-    if (!plist_string_equals(build, buildID) || !plist_boolean_is_true(beta) ||
+    if (!plist_string_equals(build, buildID) ||
+        (!plist_boolean_is_true(beta) && !plist_boolean_is_true(releaseCandidate)) ||
         !plist_array_contains_string(devices, deviceModel)) {
         goto done;
     }
@@ -934,7 +937,7 @@ t_versionURL *getFirmwareUrls(const char *deviceModel, t_iosVersion *versVals, j
         if (!ota && versVals->buildID) {
             t_versionURL *betaFirmware = getAppleDBBetaFirmware(deviceModel, versVals->buildID);
             if (betaFirmware) {
-                info("[TSSC] Resolved beta build %s (%s) from AppleDB\n",
+                info("[TSSC] Resolved beta/RC build %s (%s) from AppleDB\n",
                      betaFirmware[0].buildID, betaFirmware[0].version);
                 return betaFirmware;
             }
@@ -1014,7 +1017,7 @@ malloc_rets:
         if (!ota && versVals->buildID) {
             t_versionURL *betaFirmware = getAppleDBBetaFirmware(deviceModel, versVals->buildID);
             if (betaFirmware) {
-                info("[TSSC] Resolved beta build %s (%s) from AppleDB\n",
+                info("[TSSC] Resolved beta/RC build %s (%s) from AppleDB\n",
                      betaFirmware[0].buildID, betaFirmware[0].version);
                 return betaFirmware;
             }

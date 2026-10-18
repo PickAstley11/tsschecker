@@ -143,6 +143,6 @@ You can capture the plist from a connected device with `ideviceinfo -x -k Firmwa
 
 The client retries status 168 on up to three HTTPS Apple endpoints. If Apple still returns 168 after the eUICC request is corrected or omitted, no ticket is saved and the result remains unknown; a client cannot force Apple to issue a ticket.
 
-### Beta restore IPSWs
+### Beta and release-candidate restore IPSWs
 
-The public restore catalog does not contain beta IPSWs. For a beta restore build, pass `--buildid BUILD`; tsschecker resolves that build's device-specific IPSW through AppleDB, then asks Apple's TSS server whether it is currently signing. Explicit beta build IDs are detected automatically, so `--beta` is not required for that lookup. Beta marketing versions are not resolved from `--ios`, so use the build ID shown by Apple's beta release (for example, `24B5089g`). A missing URL is a catalog lookup failure, not a signing result.
+The public restore catalog does not contain beta or release-candidate IPSWs. For a beta or RC restore build, pass `--buildid BUILD`; tsschecker resolves that build's device-specific IPSW through AppleDB, then asks Apple's TSS server whether it is currently signing. Explicit beta and RC build IDs are detected automatically, so `--beta` is not required for that lookup. Beta and RC marketing versions are not resolved from `--ios`, so use the build ID shown for the prerelease (for example, `24B5089g` for a beta or `23G82` for the iOS 26.6.1 RC). A missing URL is a catalog lookup failure, not a signing result.
