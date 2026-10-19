@@ -2,6 +2,7 @@
 [![CI Building](https://img.shields.io/github/actions/workflow/status/1Conan/tsschecker/build_release.yml?branch=main&style=for-the-badge)](https://github.com/1Conan/tsschecker/actions)
 
 THIS FORKS COMMITS HAVE BEEN VIBECODED WITH AI TO FIX AN ISSUE I COULDNT, IF YOU HATE AI DONT USE THIS
+The issue I fixed in this repo is a issue where I was unable to save shsh blobs for newer firmwares. While this is fixed now, only the --latest and the build specifier work not the iOS Version names. I may implement it at some point but this is good enough for me right now
 
 tsschecker is a powerful tool to check TSS signing status on combinations of various apple devices and firmware versions.
 
